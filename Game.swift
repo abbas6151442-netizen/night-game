@@ -109,8 +109,9 @@ final class GameView: UIView {
     var water: SCNMaterial?
     var link: CADisplayLink?
     let ui = UIView(), ring = UIView(), dot = UIView(), cover = UIView(), label = UILabel()
-    let grain = UIView()
-    var bgm: AVAudioPlayer?
+    let grain = UIView(), tint = CAGradientLayer()
+    var bgm: AVAudioPlayer?, chase: AVAudioPlayer?
+    var near: Float = 0
     var stepT: Float = 0
     var tex: [UIImage] = []
     let KF: [[Float]] = [[0, 1.2, 1.6, 4.4, 0, 0], [1.8, 1.2, 1.6, 4.4, 0, 0], [4.2, 1.2, 1.6, 0.8, 0, 0],
@@ -132,7 +133,12 @@ final class GameView: UIView {
         // chunky moving film grain over the whole picture
         ui.isUserInteractionEnabled = false; ui.clipsToBounds = true; addSubview(ui)
         if let g = img("noise", "png")?.cgImage { grain.layer.contents = g }
-        grain.layer.magnificationFilter = .nearest; grain.alpha = 0.55; ui.addSubview(grain)
+        grain.layer.magnificationFilter = .nearest; grain.alpha = 0.3; ui.addSubview(grain)
+        // rich color: warm on top, blue at the bottom
+        tint.colors = [UIColor(red: 0.95, green: 0.5, blue: 0.12, alpha: 1).cgColor, UIColor(red: 0.05, green: 0.2, blue: 0.75, alpha: 1).cgColor]
+        tint.startPoint = CGPoint(x: 0.5, y: 0); tint.endPoint = CGPoint(x: 0.5, y: 1)
+        tint.opacity = 0.45; tint.compositingFilter = "softLightBlendMode"
+        ui.layer.insertSublayer(tint, at: 0)
         for (v, s) in [(ring, 100.0), (dot, 44.0)] {
             v.bounds = CGRect(x: 0, y: 0, width: s, height: s); v.layer.cornerRadius = CGFloat(s / 2)
             v.layer.borderColor = UIColor(white: 1, alpha: 0.3).cgColor; v.layer.borderWidth = 2
@@ -155,14 +161,15 @@ final class GameView: UIView {
         let q = CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
         sv.frame = q; ui.frame = q; cover.frame = q; label.frame = q.insetBy(dx: 16, dy: 0)
         grain.frame = CGRect(x: -20, y: -20, width: w + 40, height: h + 40)
-        sv.contentScaleFactor = fxOn ? 300 / w : UIScreen.main.scale
+        sv.contentScaleFactor = fxOn ? 480 / w : UIScreen.main.scale
+        CATransaction.begin(); CATransaction.setDisableActions(true); tint.frame = ui.bounds; CATransaction.commit()
         sv.layer.magnificationFilter = .nearest
     }
 
     func applyFx() {
         let c = cam.camera!, k: CGFloat = fxOn ? 1 : 0
-        c.saturation = 1 - 0.15 * k; c.grainIntensity = 0.5 * k; c.colorFringeStrength = 0
-        c.vignettingIntensity = 0.5 * k; c.vignettingPower = 1
+        c.saturation = 1 + 0.25 * k; c.grainIntensity = 0.25 * k; c.colorFringeStrength = 0
+        c.vignettingIntensity = 0.35 * k; c.vignettingPower = 1
         ui.isHidden = !fxOn
     }
     func after(_ s: Double, _ f: @escaping () -> Void) {
@@ -186,11 +193,11 @@ final class GameView: UIView {
     }
     @objc func quit() {
         guard alive else { return }
-        alive = false; bgm?.stop(); link?.invalidate(); link = nil; removeFromSuperview(); onExit?()
+        alive = false; bgm?.stop(); chase?.stop(); link?.invalidate(); link = nil; removeFromSuperview(); onExit?()
     }
 
     func begin() {
-        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil
+        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0
         cover.backgroundColor = .black; cover.alpha = 1; label.alpha = 0; label.textColor = .white
         cam.childNodes.forEach { $0.removeFromParentNode() }
         let sc = SCNScene(); sc.rootNode.addChildNode(rig); sv.scene = sc; sv.pointOfView = cam
@@ -247,7 +254,7 @@ final class GameView: UIView {
 
     // round dark tunnel with drawings on the wall and water on the floor; the end light only shows when close
     func build2(_ sc: SCNScene) {
-        sc.fogStartDistance = 2; sc.fogEndDistance = 24; bx = 0.8; bz = 58.5
+        sc.fogStartDistance = 2; sc.fogEndDistance = 28; bx = 0.8; bz = 58.5
         let t = SCNNode(geometry: tube(1.6, 120, 28, 1, 25.5))
         t.geometry?.firstMaterial = tmat("wall", "jpg", 1, 1); t.position = SCNVector3(0, 1.6, 0); sc.rootNode.addChildNode(t)
         let w = SCNNode(geometry: SCNPlane(width: 1.3, height: 120))
@@ -258,12 +265,12 @@ final class GameView: UIView {
             let e = SCNNode(geometry: g); e.geometry?.firstMaterial = mat(.white, lit: false); e.position = SCNVector3(0, 1.6, s * 59.9)
             sc.rootNode.addChildNode(e)
         }
-        addLight(.ambient, 40, .white, to: sc.rootNode, at: SCNVector3Zero)
-        addLight(.spot, 1800, UIColor(red: 1, green: 0.93, blue: 0.78, alpha: 1), to: cam, at: SCNVector3Zero)
-        if let l = cam.childNodes.last?.light { l.spotInnerAngle = 15; l.spotOuterAngle = 55; l.attenuationEndDistance = 22 }
+        addLight(.ambient, 110, .white, to: sc.rootNode, at: SCNVector3Zero)
+        addLight(.spot, 2600, UIColor(red: 1, green: 0.93, blue: 0.78, alpha: 1), to: cam, at: SCNVector3Zero)
+        if let l = cam.childNodes.last?.light { l.spotInnerAngle = 15; l.spotOuterAngle = 55; l.attenuationEndDistance = 28 }
     }
 
-    // the distant entity walks ahead of you at a fixed distance and never reaches you
+    // the white entity runs after you from behind; its strange sound grows as it gets close
     func spawn() {
         let h: CGFloat = 1.8, w = h * tex[0].size.width / tex[0].size.height
         let m = SCNMaterial(); m.lightingModel = .constant; m.isDoubleSided = true; m.diffuse.contents = tex[0]
@@ -271,14 +278,25 @@ final class GameView: UIView {
         let g = SCNPlane(width: w, height: h); g.firstMaterial = m
         let n = SCNNode(geometry: g)
         mdir = rig.position.z > 0 ? 1 : -1
-        n.position = SCNVector3(0, 0.9, rig.position.z + mdir * 16)
+        n.position = SCNVector3(0, 0.9, rig.position.z - mdir * 14)
         let bc = SCNBillboardConstraint(); bc.freeAxes = .Y; n.constraints = [bc]
         sv.scene?.rootNode.addChildNode(n); monster = n
+        chase = Snd.play("chase", 0.1, loop: true)
     }
-    func lead(_ m: SCNNode, _ moving: Bool, _ dt: Float) {
+    func lead(_ m: SCNNode, _ dt: Float) {
+        ft += dt
         let p = rig.position
-        m.position = SCNVector3(p.x * 0.5, 0.9, p.z + mdir * 16)
-        m.isHidden = abs(p.z) > 46
+        let z = m.position.z + mdir * 3.5 * dt
+        m.position = SCNVector3(p.x * 0.5, 0.9 + abs(sin(ft * 12)) * 0.1, z)
+        let gap = (p.z - z) * mdir
+        near = max(0, min(1, 1 - gap / 14))
+        chase?.volume = vol * (0.1 + 0.9 * near)
+        if gap < 1.2 { caught() }
+    }
+    func caught() {
+        state = 2; near = 0; chase?.stop(); _ = Snd.play("sting", 1)
+        cover.alpha = 1; label.alpha = 0
+        after(1.6) { self.begin() }
     }
 
     func drop() {
@@ -289,7 +307,7 @@ final class GameView: UIView {
         after(5.2) { self.night = 2; self.begin() }
     }
     func win() {
-        state = 2; cover.backgroundColor = .white
+        state = 2; chase?.stop(); cover.backgroundColor = .white
         UIView.animate(withDuration: 1.5) { self.cover.alpha = 1 }
         after(1.6) { self.label.textColor = .black; self.card(T("end")) }
         after(5) { self.quit() }
@@ -330,12 +348,12 @@ final class GameView: UIView {
             if night == 1 && dist > 6 { drop() }
             if night == 2 {
                 if monster == nil && abs(nz) > 10 { spawn() }
-                if let m = monster { lead(m, st > 0.001, dt) }
+                if let m = monster { lead(m, dt) }
                 if abs(nz) > 58 && state == 1 { win() }
             }
         }
         water?.diffuse.contentsTransform = SCNMatrix4Mult(SCNMatrix4MakeScale(1, 100, 1), SCNMatrix4MakeTranslation(0, tt * 0.04, 0))
-        let amp: Float = fxOn ? 0.006 + shake : 0
+        let amp: Float = fxOn ? 0.006 + shake + near * 0.02 : 0
         func r() -> Float { Float.random(in: -1...1) }
         rig.eulerAngles = SCNVector3(0, yaw, 0)
         cam.eulerAngles = SCNVector3(pitch + r() * amp, r() * amp * 0.5, r() * amp)
