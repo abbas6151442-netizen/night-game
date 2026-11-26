@@ -109,7 +109,7 @@ final class GameView: UIView {
     var water: SCNMaterial?
     var link: CADisplayLink?
     let ui = UIView(), ring = UIView(), dot = UIView(), cover = UIView(), label = UILabel()
-    let grain = UIView(), tint = CAGradientLayer()
+    let grain = UIView(), tint = CAGradientLayer(), pic = UIImageView()
     var bgm: AVAudioPlayer?, chase: AVAudioPlayer?
     var near: Float = 0
     var stepT: Float = 0
@@ -147,7 +147,9 @@ final class GameView: UIView {
         cover.isUserInteractionEnabled = false
         label.font = UIFont(name: "Courier-Bold", size: 26) ?? .boldSystemFont(ofSize: 26)
         label.textColor = .white; label.textAlignment = .center; label.numberOfLines = 0; label.alpha = 0
-        [cover, label].forEach { addSubview($0) }
+        pic.image = img("eye", "jpg"); pic.contentMode = .scaleAspectFill; pic.clipsToBounds = true; pic.backgroundColor = .black; pic.alpha = 0
+        pic.layer.magnificationFilter = .nearest
+        [cover, pic, label].forEach { addSubview($0) }
         let x = UIButton(type: .system); x.setTitle("✕", for: .normal); x.setTitleColor(UIColor(white: 1, alpha: 0.5), for: .normal)
         x.frame = CGRect(x: 10, y: 8, width: 44, height: 44); x.addTarget(self, action: #selector(quit), for: .touchUpInside)
         addSubview(x)
@@ -159,7 +161,7 @@ final class GameView: UIView {
         super.layoutSubviews()
         let h = min(bounds.height, bounds.width / 1.25), w = h * 1.25
         let q = CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
-        sv.frame = q; ui.frame = q; cover.frame = q; label.frame = q.insetBy(dx: 16, dy: 0)
+        sv.frame = q; ui.frame = q; cover.frame = q; pic.frame = q; label.frame = q.insetBy(dx: 16, dy: 0)
         grain.frame = CGRect(x: -20, y: -20, width: w + 40, height: h + 40)
         sv.contentScaleFactor = fxOn ? 480 / w : UIScreen.main.scale
         CATransaction.begin(); CATransaction.setDisableActions(true); tint.frame = ui.bounds; CATransaction.commit()
@@ -198,7 +200,7 @@ final class GameView: UIView {
 
     func begin() {
         state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0
-        cover.backgroundColor = .black; cover.alpha = 1; label.alpha = 0; label.textColor = .white
+        cover.backgroundColor = .black; cover.alpha = 1; pic.alpha = 0; label.alpha = 0; label.textColor = .white
         cam.childNodes.forEach { $0.removeFromParentNode() }
         let sc = SCNScene(); sc.rootNode.addChildNode(rig); sv.scene = sc; sv.pointOfView = cam
         sc.fogColor = night == 2 ? UIColor.black : UIColor(red: 0.16, green: 0.17, blue: 0.26, alpha: 1)
@@ -296,7 +298,8 @@ final class GameView: UIView {
     func caught() {
         state = 2; near = 0; chase?.stop(); _ = Snd.play("sting", 1)
         cover.alpha = 1; label.alpha = 0
-        after(1.6) { self.begin() }
+        after(1) { self.pic.alpha = 1 }
+        after(3.2) { self.begin() }
     }
 
     func drop() {
