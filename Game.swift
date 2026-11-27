@@ -19,7 +19,9 @@ let TXT: [String: (String, String)] = [
     "s3": ("Strange dreams follow me every night.", "أحلام غريبة تلاحقني كل ليلة."),
     "s4": ("Alright... I'm tired. I'll go to sleep.", "حسنًا... أنا متعب، سأذهب للنوم."),
     "dream": ("Am I dreaming?", "هل أنا أحلم؟"),
-    "hosp": ("A wound?! I have to go to the hospital.", "جرح؟! لازم أذهب إلى المستشفى."),
+    "wound": ("The wound!", "الجرح!"),
+    "w1": ("The wound... it's real.", "الجرح... إنه حقيقي."),
+    "w2": ("I have to go to the hospital.", "لازم أذهب إلى المستشفى."),
     "h1": ("I went to the hospital... they found nothing.", "ذهبت إلى المستشفى... ولم يكتشفوا شيئًا."),
     "h2": ("This is very strange...", "هذا غريب جدًا..."),
     "h3": ("Let me rest and go to sleep.", "دعني أرتاح وأذهب للنوم."),
@@ -47,7 +49,7 @@ func tmat(_ n: String, _ e: String, _ rx: Float, _ ry: Float) -> SCNMaterial {
     let m = SCNMaterial()
     m.diffuse.contents = img(n, e) ?? UIColor.gray
     m.diffuse.wrapS = .repeat; m.diffuse.wrapT = .repeat
-    m.diffuse.magnificationFilter = .nearest; m.diffuse.minificationFilter = .nearest; m.diffuse.mipFilter = .none
+    m.diffuse.magnificationFilter = .linear; m.diffuse.minificationFilter = .linear; m.diffuse.mipFilter = .none
     m.diffuse.contentsTransform = SCNMatrix4MakeScale(rx, ry, 1)
     m.isDoubleSided = true; m.lightingModel = .lambert
     return m
@@ -117,7 +119,7 @@ final class GameView: UIView {
     var water: SCNMaterial?
     var link: CADisplayLink?
     let ui = UIView(), ring = UIView(), dot = UIView(), cover = UIView(), label = UILabel()
-    let grain = UIView(), tint = CAGradientLayer(), pic = UIImageView()
+    let grain = UIView(), tint = CAGradientLayer(), pic = UIImageView(), scan = CAReplicatorLayer()
     var bgm: AVAudioPlayer?, chase: AVAudioPlayer?
     var near: Float = 0
     var stepT: Float = 0
@@ -125,6 +127,8 @@ final class GameView: UIView {
     var kf: [[Float]] = [], endT: Float = 20
     let legs = UIImageView(), sub = UILabel()
     var eyeN: UIImage?, eyeG: [UIImage] = []
+    var cf: Float = 0, doorT: Float = -1
+    var legsNode: SCNNode?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -148,6 +152,10 @@ final class GameView: UIView {
         tint.startPoint = CGPoint(x: 0.5, y: 0); tint.endPoint = CGPoint(x: 0.5, y: 1)
         tint.opacity = 0.45; tint.compositingFilter = "softLightBlendMode"
         ui.layer.insertSublayer(tint, at: 0)
+        // old VHS scanlines
+        let ln = CALayer(); ln.frame = CGRect(x: 0, y: 0, width: 2000, height: 1); ln.backgroundColor = UIColor(white: 0, alpha: 0.12).cgColor
+        scan.frame = CGRect(x: 0, y: 0, width: 2000, height: 3); scan.addSublayer(ln); scan.instanceCount = 150
+        scan.instanceTransform = CATransform3DMakeTranslation(0, 3, 0); ui.layer.addSublayer(scan)
         for (v, s) in [(ring, 100.0), (dot, 44.0)] {
             v.bounds = CGRect(x: 0, y: 0, width: s, height: s); v.layer.cornerRadius = CGFloat(s / 2)
             v.layer.borderColor = UIColor(white: 1, alpha: 0.3).cgColor; v.layer.borderWidth = 2
@@ -176,15 +184,15 @@ final class GameView: UIView {
         let q = CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
         sv.frame = q; ui.frame = q; cover.frame = q; pic.frame = q; legs.frame = q; sub.frame = CGRect(x: q.minX + 8, y: q.maxY - 64, width: q.width - 16, height: 52); label.frame = q.insetBy(dx: 16, dy: 0)
         grain.frame = CGRect(x: -20, y: -20, width: w + 40, height: h + 40)
-        sv.contentScaleFactor = fxOn ? 480 / w : UIScreen.main.scale
+        sv.contentScaleFactor = fxOn ? 420 / w : UIScreen.main.scale
         CATransaction.begin(); CATransaction.setDisableActions(true); tint.frame = ui.bounds; CATransaction.commit()
-        sv.layer.magnificationFilter = .nearest
     }
 
     func applyFx() {
         let c = cam.camera!, k: CGFloat = fxOn ? 1 : 0
-        c.saturation = 1 + 0.25 * k; c.grainIntensity = 0.25 * k; c.colorFringeStrength = 0
-        c.vignettingIntensity = 0.35 * k; c.vignettingPower = 1
+        c.saturation = 1 + 0.35 * k; c.grainIntensity = 0.25 * k; c.colorFringeStrength = 0.6 * k
+        c.vignettingIntensity = 0.5 * k; c.vignettingPower = 1
+        c.bloomIntensity = 0.45 * k; c.bloomThreshold = 0.8; c.bloomBlurRadius = 8
         ui.isHidden = !fxOn
     }
     func after(_ s: Double, _ f: @escaping () -> Void) {
@@ -194,7 +202,7 @@ final class GameView: UIView {
     func hud(_ name: String, _ h: CGFloat, _ x: Float, _ y: Float, _ rot: Float, _ order: Int) -> SCNNode {
         let im = img(name, "png"), s = im?.size ?? CGSize(width: 1, height: 1)
         let m = SCNMaterial(); m.lightingModel = .constant; m.isDoubleSided = true; m.diffuse.contents = im ?? UIColor.gray
-        m.diffuse.magnificationFilter = .nearest; m.diffuse.minificationFilter = .nearest
+        m.diffuse.magnificationFilter = .linear; m.diffuse.minificationFilter = .linear
         m.readsFromDepthBuffer = false; m.writesToDepthBuffer = false
         let n = SCNNode(geometry: SCNPlane(width: h * s.width / s.height, height: h))
         n.geometry?.firstMaterial = m; n.position = SCNVector3(x, y, -0.5); n.eulerAngles = SCNVector3(0, 0, rot); n.renderingOrder = order
@@ -218,44 +226,54 @@ final class GameView: UIView {
     }
 
     func begin(_ quick: Bool = false) {
-        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0
+        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0; cf = 0; legsNode = nil; doorT = -1
         cover.backgroundColor = .black; cover.alpha = 1; pic.alpha = 0; legs.alpha = 0; sub.alpha = 0; label.alpha = 0; label.textColor = .white
         cam.childNodes.forEach { $0.removeFromParentNode() }
         let sc = SCNScene(); sc.rootNode.addChildNode(rig); sv.scene = sc; sv.pointOfView = cam
         sc.fogColor = night == 2 ? UIColor.black : UIColor(red: 0.16, green: 0.17, blue: 0.26, alpha: 1)
         rig.position = SCNVector3(0, 1.6, 0)
         switch night {
-        case 0, 3: buildHome(sc)
+        case 0, 3, 5: buildHome(sc)
         case 1: buildDream(sc)
+        case 6: buildRoad(sc)
         default: build2(sc)
         }
         applyFx()
-        bgm?.stop(); bgm = Snd.play(night == 2 ? "tunnel" : "amb", night == 2 ? 0.9 : 0.45, loop: true)
-        if night == 0 || night == 3 {
-            state = 3
-            if night == 0 { after(0.8) { _ = Snd.play("creak", 0.8) } }
-            UIView.animate(withDuration: 1) { self.cover.alpha = 0 }
-            let lines: [(Double, String)] = night == 0 ? [(6, "s1"), (9.4, "s2"), (12.8, "s3"), (16.2, "s4")] : [(1.2, "h1"), (4.6, "h2"), (8, "h3")]
-            for (t, k) in lines { after(t) { self.showSub(T(k)) } }
-        } else if night == 1 {
+        bgm?.stop(); bgm = Snd.play(night == 2 || night == 6 ? "tunnel" : "amb", night == 2 ? 0.9 : (night == 6 ? 0.6 : 0.45), loop: true)
+        if night == 1 {
             UIView.animate(withDuration: 1) { self.cover.alpha = 0 }
             after(1) { self.state = 1 }
             after(1.6) { self.showSub(T("dream")) }
-        } else if quick {
-            cover.alpha = 0; state = 1
+        } else if night == 2 {
+            if quick { cover.alpha = 0; state = 1 } else {
+                card(T("n2"))
+                after(2.2) { self.label.alpha = 0; UIView.animate(withDuration: 0.6) { self.cover.alpha = 0 }; self.state = 1 }
+            }
         } else {
-            card(T("n2"))
-            after(2.2) { self.label.alpha = 0; UIView.animate(withDuration: 0.6) { self.cover.alpha = 0 }; self.state = 1 }
+            state = 3
+            if night == 0 { after(0.8) { _ = Snd.play("creak", 0.8) } }
+            if night == 5 { after(3.2) { self.legsNode?.isHidden = false }; after(9.4) { self.legsNode?.isHidden = true } }
+            UIView.animate(withDuration: 1) { self.cover.alpha = 0 }
+            var lines: [(Double, String)] = []
+            switch night {
+            case 0: lines = [(6, "s1"), (9.4, "s2"), (12.8, "s3"), (16.2, "s4")]
+            case 5: lines = [(4, "w1"), (7, "w2")]
+            case 3: lines = [(1.2, "h1"), (4.6, "h2"), (8, "h3")]
+            default: break
+            }
+            for (t, k) in lines { after(t) { self.showSub(T(k)) } }
         }
     }
 
     // the real bedroom: night 0 = first evening, night 3 = back from the hospital
     func buildHome(_ sc: SCNScene) {
-        let R = sc.rootNode, again = night == 3
+        let R = sc.rootNode, again = night == 3, wake = night == 5
         sc.fogStartDistance = 3; sc.fogEndDistance = 20; bx = 2.9; bz = 2.9
         R.addChildNode(hall(6, 3, 6, floor: "wood", wall: "paper"))
         let dr = SCNNode(); dr.position = SCNVector3(0.7, 0, 2.99); R.addChildNode(dr); door = dr
         if again { dr.eulerAngles = SCNVector3(0, 1.7, 0) }
+        doorT = night == 0 ? 0.8 : (night == 5 ? 11 : -2)
+        if wake { legsNode = hud("legs2", 0.8, 0, -0.25, 0, 90); legsNode?.isHidden = true }
         blk(dr, 1, 2.1, 0.05, 0.5, 1.05, 0, tmat("wood", "jpg", 1, 2))
         let wood = tmat("wood", "jpg", 1, 1), white = col(0.8, 0.8, 0.82)
         blk(R, 1.5, 0.35, 2.3, -2.2, 0.18, -1.8, wood)
@@ -277,7 +295,12 @@ final class GameView: UIView {
         addLight(.omni, 700, UIColor(red: 1, green: 0.8, blue: 0.55, alpha: 1), to: R, at: SCNVector3(-1.1, 1.1, -2.6), 7)
         addLight(.omni, 300, UIColor(red: 0.5, green: 0.6, blue: 1, alpha: 1), to: R, at: SCNVector3(2.4, 1.7, 0.8), 6)
         // timeline: walk in, sit on the chair and talk, then lie down along the bed (head on the pillow)
-        if again {
+        if wake {
+            rig.position = SCNVector3(-2.2, 0.85, -2.45)
+            kf = [[0, -2.2, 0.85, -2.45, 3.14, 1.3], [2.4, -2.2, 0.85, -2.45, 3.14, 1.3], [4, -2.2, 1.1, -2.3, 3.14, -0.75], [9, -2.2, 1.1, -2.3, 3.14, -0.75],
+                  [10.4, -1.1, 1.6, -1.1, 1.3, -0.1], [12.6, 1.2, 1.6, 2.0, 0, 0], [14.4, 1.2, 1.6, 4.4, 0, 0]]
+            endT = 15
+        } else if again {
             rig.position = SCNVector3(2.2, 1.1, 0.3)
             kf = [[0, 2.2, 1.1, 0.3, 0, -0.05], [10.5, 2.2, 1.1, 0.3, 0.1, -0.05], [12.8, -1.1, 1.6, -1.1, 1, -0.3], [15, -2.2, 0.85, -2.45, 3.14, 1.3]]
             endT = 15.8
@@ -289,32 +312,67 @@ final class GameView: UIView {
         }
     }
 
-    // the first dream: a very strange place, not his room
+    // the first dream: a bright, very strange field (not his room)
     func buildDream(_ sc: SCNScene) {
-        let R = sc.rootNode, sky = UIColor(red: 0.32, green: 0.1, blue: 0.3, alpha: 1)
-        sc.background.contents = sky; sc.fogColor = sky
-        sc.fogStartDistance = 6; sc.fogEndDistance = 50; bx = 14; bz = 14
-        let f = SCNNode(geometry: SCNPlane(width: 120, height: 120)); f.geometry?.firstMaterial = tmat("paper", "jpg", 120, 120)
+        let R = sc.rootNode
+        sc.fogEndDistance = 0; bx = 40; bz = 40
+        let sk = SCNNode(geometry: SCNSphere(radius: 140)), sm = SCNMaterial()
+        sm.diffuse.contents = img("sky", "jpg") ?? UIColor.blue; sm.lightingModel = .constant; sm.cullMode = .front
+        sm.writesToDepthBuffer = false; sk.geometry?.firstMaterial = sm; sk.renderingOrder = -10; R.addChildNode(sk)
+        let f = SCNNode(geometry: SCNPlane(width: 300, height: 300)); f.geometry?.firstMaterial = tmat("grass", "jpg", 150, 150)
         f.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0); R.addChildNode(f)
         var sd: UInt32 = 7
         func rnd() -> Float { sd = sd &* 1664525 &+ 1013904223; return Float(sd >> 8) / Float(1 << 24) }
-        for _ in 0..<18 {
-            let a = rnd() * 6.28, d = 4 + rnd() * 14
-            let n = blk(R, 1.1, 2.2, 0.08, cos(a) * d, 1 + rnd() * 3, sin(a) * d, tmat("wood", "jpg", 1, 2))
-            n.eulerAngles = SCNVector3((rnd() - 0.5) * 0.8, rnd() * 6.28, (rnd() - 0.5) * 0.8)
+        for i in 0..<14 {
+            let a = rnd() * 6.28, d = 6 + rnd() * 26
+            let n = blk(R, 1.1, 2.2, 0.08, cos(a) * d, 1.1, sin(a) * d, i % 3 == 0 ? mat(UIColor(white: 0.02, alpha: 1), lit: false) : tmat("wood", "jpg", 1, 2))
+            n.eulerAngles = SCNVector3(0, rnd() * 6.28, 0)
         }
-        for _ in 0..<6 {
-            let a = rnd() * 6.28, d = 6 + rnd() * 12
-            let n = blk(R, 1.5, 0.4, 2.3, cos(a) * d, 2 + rnd() * 4, sin(a) * d, tmat("wood", "jpg", 1, 1))
-            n.eulerAngles = SCNVector3(rnd() * 3, rnd() * 6, rnd() * 3)
+        let hs = blk(R, 6, 4, 5, -14, 2, -26, tmat("brick", "jpg", 3, 2))
+        let roof = SCNNode(geometry: SCNPyramid(width: 6.6, height: 2.6, length: 5.6)); roof.geometry?.firstMaterial = col(0.2, 0.15, 0.17)
+        roof.position = SCNVector3(0, 2.0, 0); hs.addChildNode(roof)
+        blk(hs, 0.9, 1.9, 0.1, 0, -1.05, 2.52, col(0.1, 0.07, 0.05))
+        for wx: Float in [-1.8, 1.8] { blk(hs, 0.9, 0.9, 0.1, wx, 0.3, 2.52, mat(UIColor(red: 0.8, green: 0.85, blue: 1, alpha: 1), lit: false)) }
+        blk(R, 0.2, 1.0, 0.2, 3, 0.5, -6, col(0.35, 0.35, 0.42))
+        let shade = SCNNode(geometry: SCNCone(topRadius: 0.2, bottomRadius: 0.5, height: 0.6))
+        shade.geometry?.firstMaterial = mat(UIColor(red: 0.6, green: 0.62, blue: 0.75, alpha: 1), lit: false)
+        shade.position = SCNVector3(3, 1.3, -6); R.addChildNode(shade)
+        for i in 0..<5 {
+            let e = SCNNode(geometry: SCNPlane(width: 9, height: 4.5)); e.geometry?.firstMaterial = mat(.white, lit: false)
+            if let im = img("skyeye", "png") { e.geometry?.firstMaterial?.diffuse.contents = im }
+            let a = Float(i) * 1.25 + 0.4
+            e.position = SCNVector3(sin(a) * 38, 16 + Float(i % 3) * 5, -cos(a) * 38)
+            let bc = SCNBillboardConstraint(); bc.freeAxes = .Y; e.constraints = [bc]; R.addChildNode(e)
         }
-        let moon = SCNNode(geometry: SCNSphere(radius: 7)); moon.geometry?.firstMaterial = mat(UIColor(red: 1, green: 0.9, blue: 0.8, alpha: 1), lit: false)
-        moon.position = SCNVector3(0, 16, -34); R.addChildNode(moon)
-        addLight(.ambient, 320, UIColor(red: 0.7, green: 0.45, blue: 0.8, alpha: 1), to: R, at: SCNVector3Zero)
-        addLight(.omni, 500, UIColor(red: 1, green: 0.4, blue: 0.4, alpha: 1), to: R, at: SCNVector3(0, 8, 0))
+        let tp = SCNNode(geometry: SCNPlane(width: 16, height: 5)); tp.geometry?.firstMaterial = mat(.white, lit: false)
+        if let im = img("dreamtxt", "png") { tp.geometry?.firstMaterial?.diffuse.contents = im }
+        tp.position = SCNVector3(0, 11, -34); R.addChildNode(tp)
+        addLight(.ambient, 750, UIColor(red: 0.9, green: 0.92, blue: 1, alpha: 1), to: R, at: SCNVector3Zero)
+        addLight(.omni, 300, .white, to: R, at: SCNVector3(20, 40, 10))
         rig.position = SCNVector3(0, 1.6, 0)
-        knife = hud("knife", 0.46, 0.22, -0.12, 0.1, 100)
-        _ = hud("hand", 0.3, 0.24, -0.3, 0, 101)
+        legsNode = hud("legs1", 0.7, 0, -0.3, 0, 90)
+        knife = hud("knife", 0.46, 0.3, -0.12, 0.1, 100)
+        _ = hud("hand", 0.32, 0.32, -0.3, 0, 101)
+    }
+
+    // outside at night: the road to the hospital
+    func buildRoad(_ sc: SCNScene) {
+        let R = sc.rootNode
+        sc.background.contents = UIColor.black; sc.fogColor = UIColor.black; sc.fogStartDistance = 12; sc.fogEndDistance = 55; bx = 3; bz = 3
+        let g = SCNNode(geometry: SCNPlane(width: 60, height: 120)); g.geometry?.firstMaterial = col(0.12, 0.12, 0.14)
+        g.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0); g.position = SCNVector3(0, 0, -40); R.addChildNode(g)
+        let hp = SCNNode(geometry: SCNPlane(width: 16, height: 16 * 321 / 480)); hp.geometry?.firstMaterial = mat(.white, lit: false)
+        if let im = img("hospital", "jpg") { hp.geometry?.firstMaterial?.diffuse.contents = im }
+        hp.position = SCNVector3(0, 5.4, -32); R.addChildNode(hp)
+        for i in 0..<5 {
+            let z = -Float(i) * 7 - 3
+            blk(R, 0.15, 4, 0.15, 3.2, 2, z, col(0.2, 0.2, 0.22))
+            blk(R, 0.5, 0.3, 0.5, 3.2, 4.1, z, mat(UIColor(red: 1, green: 0.85, blue: 0.5, alpha: 1), lit: false))
+            addLight(.omni, 500, UIColor(red: 1, green: 0.85, blue: 0.55, alpha: 1), to: R, at: SCNVector3(3.2, 4, z), 9)
+        }
+        addLight(.ambient, 120, UIColor(red: 0.5, green: 0.55, blue: 0.9, alpha: 1), to: R, at: SCNVector3Zero)
+        rig.position = SCNVector3(0, 1.6, 0)
+        kf = [[0, 0, 1.6, 0, 0, 0], [14, 0, 1.6, -26, 0, 0]]; endT = 13.8
     }
 
     // round dark tunnel with drawings on the wall and water on the floor; the end light only shows when close
@@ -339,23 +397,23 @@ final class GameView: UIView {
     func spawn() {
         let h: CGFloat = 1.8, w = h * tex[0].size.width / tex[0].size.height
         let m = SCNMaterial(); m.lightingModel = .constant; m.isDoubleSided = true; m.diffuse.contents = tex[0]
-        m.diffuse.magnificationFilter = .nearest; m.diffuse.minificationFilter = .nearest
+        m.diffuse.magnificationFilter = .linear; m.diffuse.minificationFilter = .linear
         let g = SCNPlane(width: w, height: h); g.firstMaterial = m
         let n = SCNNode(geometry: g)
         mdir = rig.position.z > 0 ? 1 : -1
         n.position = SCNVector3(0, 0.9, rig.position.z - mdir * 14)
         let bc = SCNBillboardConstraint(); bc.freeAxes = .Y; n.constraints = [bc]
         sv.scene?.rootNode.addChildNode(n); monster = n
-        chase = Snd.play("chase", 0.1, loop: true)
+        chase = Snd.play("chase", 0, loop: true)
     }
     func lead(_ m: SCNNode, _ dt: Float) {
-        ft += dt
+        ft += dt; cf = min(1, cf + dt * 0.25)
         let p = rig.position
         let z = m.position.z + mdir * 3.5 * dt
         m.position = SCNVector3(p.x * 0.5, 0.9 + abs(sin(ft * 12)) * 0.1, z)
         let gap = (p.z - z) * mdir
         near = max(0, min(1, 1 - gap / 14))
-        chase?.volume = vol * (0.1 + 0.9 * near)
+        chase?.volume = vol * cf * (0.25 + 0.75 * near)
         if gap < 1.2 { caught() }
     }
     // caught: glitch, glitched death picture, calm picture with a sad tense tune, glitch, then straight back to the start
@@ -378,15 +436,17 @@ final class GameView: UIView {
         }
     }
 
-    // dream 1: the knife falls, he looks down, it cuts his leg, "I must go to the hospital", then dark
+    // dream 1: the knife falls on his leg, he sits, stands, sees the wound, then dark
     func drop() {
         state = 4; jv = .zero; _ = Snd.play("sting", 0.7)
-        knife?.runAction(.moveBy(x: 0, y: -0.8, z: 0, duration: 1.3))
-        after(0.6) { self.legs.image = img("legs1", "png"); UIView.animate(withDuration: 0.4) { self.legs.alpha = 1 } }
-        after(1.7) { self.legs.image = img("legs2", "png"); self.shake = 0.06; _ = Snd.play("thud", 1) }
-        after(2.3) { self.showSub(T("hosp"), 3.4) }
-        after(5.8) { UIView.animate(withDuration: 0.8) { self.cover.alpha = 1 } }
-        after(6.8) { self.night = 3; self.begin() }
+        knife?.runAction(.moveBy(x: 0, y: -0.9, z: 0, duration: 1.2))
+        legsNode?.runAction(.group([.scale(to: 1.8, duration: 1.0), .move(to: SCNVector3(0, -0.12, -0.5), duration: 1.0)]))
+        after(1.2) { self.legsNode?.geometry?.firstMaterial?.diffuse.contents = img("legs2", "png"); self.shake = 0.07; _ = Snd.play("thud", 1) }
+        after(1.4) { self.rig.runAction(.moveBy(x: 0, y: -0.7, z: 0, duration: 0.6)) }
+        after(2.4) { self.showSub(T("wound"), 2.4) }
+        after(3.2) { self.rig.runAction(.moveBy(x: 0, y: 0.7, z: 0, duration: 0.7)) }
+        after(5.2) { UIView.animate(withDuration: 0.8) { self.cover.alpha = 1 } }
+        after(6.2) { self.night = 5; self.begin() }
     }
     func win() {
         state = 2; chase?.stop(); cover.backgroundColor = .white
@@ -395,22 +455,27 @@ final class GameView: UIView {
         after(6) { self.quit() }
     }
 
-    // home scenes: follow the timeline in kf
+    // timeline scenes: 0 evening at home, 5 wake up and leave, 6 road to the hospital, 3 back home
     func intro(_ dt: Float) {
         introT += dt
-        if night == 0 { door?.eulerAngles = SCNVector3(0, 1.7 * min(1, max(0, introT - 0.8)), 0) }
+        if doorT >= 0 { door?.eulerAngles = SCNVector3(0, 1.7 * min(1, max(0, introT - doorT)), 0) }
         var i = 0
         while i < kf.count - 2 && introT > kf[i + 1][0] { i += 1 }
         let a = kf[i], b = kf[i + 1]
         var u = max(0, min(1, (introT - a[0]) / (b[0] - a[0]))); u = u * u * (3 - 2 * u)
         func L(_ k: Int) -> Float { a[k] + (b[k] - a[k]) * u }
-        rig.position = SCNVector3(L(1), L(2), L(3)); yaw = L(4); pitch = L(5)
+        let np = SCNVector3(L(1), L(2), L(3))
+        let mv = hypot(np.x - rig.position.x, np.z - rig.position.z) / max(dt, 0.001)
+        stepT -= dt
+        if mv > 0.8 && stepT <= 0 && introT > 1 { stepT = 0.5; _ = Snd.play("step", 0.5) }
+        rig.position = np; yaw = L(4); pitch = L(5)
         if introT > endT && !introDone {
             introDone = true
             UIView.animate(withDuration: 1) { self.cover.alpha = 1 }
-            after(1.4) { self.night = self.night == 0 ? 1 : 2; self.begin() }
+            after(1.4) { self.night = self.nextStage(self.night); self.begin() }
         }
     }
+    func nextStage(_ n: Int) -> Int { n == 0 ? 1 : (n == 5 ? 6 : (n == 6 ? 3 : 2)) }
 
     @objc func tick(_ l: CADisplayLink) {
         guard alive else { return }
