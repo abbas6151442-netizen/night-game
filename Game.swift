@@ -128,7 +128,7 @@ final class GameView: UIView {
     let legs = UIImageView(), sub = UILabel()
     var eyeN: UIImage?, eyeG: [UIImage] = []
     var cf: Float = 0, doorT: Float = -1
-    var legsNode: SCNNode?
+    var legsBody: SCNNode?, legsMat: SCNMaterial?, legsFollow = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -226,7 +226,7 @@ final class GameView: UIView {
     }
 
     func begin(_ quick: Bool = false) {
-        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0; cf = 0; legsNode = nil; doorT = -1
+        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0; cf = 0; legsBody = nil; legsMat = nil; legsFollow = false; doorT = -1
         cover.backgroundColor = .black; cover.alpha = 1; pic.alpha = 0; legs.alpha = 0; sub.alpha = 0; label.alpha = 0; label.textColor = .white
         cam.childNodes.forEach { $0.removeFromParentNode() }
         let sc = SCNScene(); sc.rootNode.addChildNode(rig); sv.scene = sc; sv.pointOfView = cam
@@ -252,7 +252,6 @@ final class GameView: UIView {
         } else {
             state = 3
             if night == 0 { after(0.8) { _ = Snd.play("creak", 0.8) } }
-            if night == 5 { after(3.2) { self.legsNode?.isHidden = false }; after(9.4) { self.legsNode?.isHidden = true } }
             UIView.animate(withDuration: 1) { self.cover.alpha = 0 }
             var lines: [(Double, String)] = []
             switch night {
@@ -273,7 +272,7 @@ final class GameView: UIView {
         let dr = SCNNode(); dr.position = SCNVector3(0.7, 0, 2.99); R.addChildNode(dr); door = dr
         if again { dr.eulerAngles = SCNVector3(0, 1.7, 0) }
         doorT = night == 0 ? 0.8 : (night == 5 ? 11 : -2)
-        if wake { legsNode = hud("legs2", 0.8, 0, -0.25, 0, 90); legsNode?.isHidden = true }
+        if wake { addLegs(R, "legs2", follow: false, pos: SCNVector3(-2.2, 0.69, -1.6), flip: true, dz: 0) }
         blk(dr, 1, 2.1, 0.05, 0.5, 1.05, 0, tmat("wood", "jpg", 1, 2))
         let wood = tmat("wood", "jpg", 1, 1), white = col(0.8, 0.8, 0.82)
         blk(R, 1.5, 0.35, 2.3, -2.2, 0.18, -1.8, wood)
@@ -312,6 +311,16 @@ final class GameView: UIView {
         }
     }
 
+    // the legs lie in the 3D world (on the ground, or stretched on the bed) so they are always there
+    func addLegs(_ R: SCNNode, _ name: String, follow: Bool, pos: SCNVector3, flip: Bool, dz: Float) {
+        let p = SCNNode(geometry: SCNPlane(width: 0.9, height: 1.2))
+        let m = SCNMaterial(); m.lightingModel = .lambert; m.isDoubleSided = true; m.diffuse.contents = img(name, "png")
+        m.diffuse.magnificationFilter = .linear; m.diffuse.minificationFilter = .linear
+        p.geometry?.firstMaterial = m; p.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0); p.position = SCNVector3(0, 0, dz)
+        let b = SCNNode(); b.position = pos; b.eulerAngles = SCNVector3(0, flip ? Float.pi : 0, 0); b.addChildNode(p)
+        R.addChildNode(b); legsBody = b; legsMat = m; legsFollow = follow
+    }
+
     // the first dream: a bright, very strange field (not his room)
     func buildDream(_ sc: SCNScene) {
         let R = sc.rootNode
@@ -338,8 +347,9 @@ final class GameView: UIView {
         shade.geometry?.firstMaterial = mat(UIColor(red: 0.6, green: 0.62, blue: 0.75, alpha: 1), lit: false)
         shade.position = SCNVector3(3, 1.3, -6); R.addChildNode(shade)
         for i in 0..<5 {
-            let e = SCNNode(geometry: SCNPlane(width: 9, height: 4.5)); e.geometry?.firstMaterial = mat(.white, lit: false)
-            if let im = img("skyeye", "png") { e.geometry?.firstMaterial?.diffuse.contents = im }
+            let sz: CGFloat = i % 3 == 2 ? 8 : 11
+            let e = SCNNode(geometry: SCNPlane(width: sz, height: sz)); e.geometry?.firstMaterial = mat(.white, lit: false)
+            if let im = img(["skyeye2", "skyeye1", "skyeye3"][i % 3], "png") { e.geometry?.firstMaterial?.diffuse.contents = im }
             let a = Float(i) * 1.25 + 0.4
             e.position = SCNVector3(sin(a) * 38, 16 + Float(i % 3) * 5, -cos(a) * 38)
             let bc = SCNBillboardConstraint(); bc.freeAxes = .Y; e.constraints = [bc]; R.addChildNode(e)
@@ -350,7 +360,7 @@ final class GameView: UIView {
         addLight(.ambient, 750, UIColor(red: 0.9, green: 0.92, blue: 1, alpha: 1), to: R, at: SCNVector3Zero)
         addLight(.omni, 300, .white, to: R, at: SCNVector3(20, 40, 10))
         rig.position = SCNVector3(0, 1.6, 0)
-        legsNode = hud("legs1", 0.7, 0, -0.3, 0, 90)
+        addLegs(R, "legs1", follow: true, pos: SCNVector3(0, 0.03, 0), flip: false, dz: -0.15)
         knife = hud("knife", 0.46, 0.3, -0.12, 0.1, 100)
         _ = hud("hand", 0.32, 0.32, -0.3, 0, 101)
     }
@@ -440,8 +450,7 @@ final class GameView: UIView {
     func drop() {
         state = 4; jv = .zero; _ = Snd.play("sting", 0.7)
         knife?.runAction(.moveBy(x: 0, y: -0.9, z: 0, duration: 1.2))
-        legsNode?.runAction(.group([.scale(to: 1.8, duration: 1.0), .move(to: SCNVector3(0, -0.12, -0.5), duration: 1.0)]))
-        after(1.2) { self.legsNode?.geometry?.firstMaterial?.diffuse.contents = img("legs2", "png"); self.shake = 0.07; _ = Snd.play("thud", 1) }
+        after(1.2) { self.legsMat?.diffuse.contents = img("legs2", "png"); self.shake = 0.07; _ = Snd.play("thud", 1) }
         after(1.4) { self.rig.runAction(.moveBy(x: 0, y: -0.7, z: 0, duration: 0.6)) }
         after(2.4) { self.showSub(T("wound"), 2.4) }
         after(3.2) { self.rig.runAction(.moveBy(x: 0, y: 0.7, z: 0, duration: 0.7)) }
@@ -483,6 +492,7 @@ final class GameView: UIView {
         tt += dt
         if state == 3 { intro(dt) }
         if state == 4 { pitch += (-1.1 - pitch) * min(1, dt * 6) }
+        if legsFollow, let b = legsBody { b.position = SCNVector3(rig.position.x, 0.03, rig.position.z); b.eulerAngles = SCNVector3(0, yaw, 0) }
         if state == 1 {
             let f = Float(-jv.y), s = Float(jv.x), sp: Float = 3
             let dx = (-sin(yaw) * f + cos(yaw) * s) * sp * dt
