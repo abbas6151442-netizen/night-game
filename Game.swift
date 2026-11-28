@@ -129,6 +129,8 @@ final class GameView: UIView {
     var eyeN: UIImage?, eyeG: [UIImage] = []
     var cf: Float = 0, doorT: Float = -1
     var legsBody: SCNNode?, legsMat: SCNMaterial?, legsFollow = false
+    var legsP: SCNNode?, legsDz: Float = 0, spd: Float = 0, walkAmt: Float = 0, lastY: Float = 1.6, headDip: Float = 0
+    let photo = UIView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -136,6 +138,9 @@ final class GameView: UIView {
         sv.isUserInteractionEnabled = false; sv.antialiasingMode = .none; sv.preferredFramesPerSecond = 30
         sv.isPlaying = true; sv.backgroundColor = .black
         addSubview(sv)
+        photo.isHidden = true; photo.clipsToBounds = true; photo.layer.contentsGravity = .resize
+        if let g = img("hospital", "jpg")?.cgImage { photo.layer.contents = g }
+        addSubview(photo)
         let c = SCNCamera(); c.zNear = 0.05; c.zFar = 200; c.fieldOfView = 75
         c.wantsHDR = true; c.wantsExposureAdaptation = false
         cam.camera = c; rig.addChildNode(cam)
@@ -182,7 +187,7 @@ final class GameView: UIView {
         super.layoutSubviews()
         let h = min(bounds.height, bounds.width / 1.25), w = h * 1.25
         let q = CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
-        sv.frame = q; ui.frame = q; cover.frame = q; pic.frame = q; legs.frame = q; sub.frame = CGRect(x: q.minX + 8, y: q.maxY - 64, width: q.width - 16, height: 52); label.frame = q.insetBy(dx: 16, dy: 0)
+        sv.frame = q; photo.frame = q; ui.frame = q; cover.frame = q; pic.frame = q; legs.frame = q; sub.frame = CGRect(x: q.minX + 8, y: q.maxY - 64, width: q.width - 16, height: 52); label.frame = q.insetBy(dx: 16, dy: 0)
         grain.frame = CGRect(x: -20, y: -20, width: w + 40, height: h + 40)
         sv.contentScaleFactor = fxOn ? 420 / w : UIScreen.main.scale
         CATransaction.begin(); CATransaction.setDisableActions(true); tint.frame = ui.bounds; CATransaction.commit()
@@ -219,6 +224,18 @@ final class GameView: UIView {
         alive = false; bgm?.stop(); chase?.stop(); link?.invalidate(); link = nil; removeFromSuperview(); onExit?()
     }
 
+    // the hospital photo is the whole place: it slowly comes closer, with a small walking sway
+    func startWalkPhoto() {
+        let a = CGRect(x: 0.27, y: 0, width: 0.703, height: 1), b = CGRect(x: 0.562, y: 0.395, width: 0.316, height: 0.45)
+        photo.layer.contentsRect = a
+        let z = CABasicAnimation(keyPath: "contentsRect"); z.fromValue = NSValue(cgRect: a); z.toValue = NSValue(cgRect: b)
+        z.duration = 13.5; z.timingFunction = CAMediaTimingFunction(name: .easeIn); z.fillMode = .forwards; z.isRemovedOnCompletion = false
+        photo.layer.add(z, forKey: "z")
+        let w = CABasicAnimation(keyPath: "transform.translation.y"); w.fromValue = -2.0; w.toValue = 2.0
+        w.duration = 0.28; w.autoreverses = true; w.repeatCount = .infinity
+        photo.layer.add(w, forKey: "w")
+    }
+
     func showSub(_ t: String, _ d: Double = 3.2) {
         let x = " " + t + " "
         sub.text = x; sub.alpha = 1
@@ -226,7 +243,7 @@ final class GameView: UIView {
     }
 
     func begin(_ quick: Bool = false) {
-        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0; cf = 0; legsBody = nil; legsMat = nil; legsFollow = false; doorT = -1
+        state = 0; dist = 0; yaw = 0; pitch = 0; bob = 0; shake = 0; monster = nil; jv = .zero; introT = 0; introDone = false; water = nil; chase?.stop(); chase = nil; near = 0; cf = 0; legsBody = nil; legsMat = nil; legsFollow = false; doorT = -1; headDip = 0; walkAmt = 0
         cover.backgroundColor = .black; cover.alpha = 1; pic.alpha = 0; legs.alpha = 0; sub.alpha = 0; label.alpha = 0; label.textColor = .white
         cam.childNodes.forEach { $0.removeFromParentNode() }
         let sc = SCNScene(); sc.rootNode.addChildNode(rig); sv.scene = sc; sv.pointOfView = cam
@@ -238,6 +255,8 @@ final class GameView: UIView {
         case 6: buildRoad(sc)
         default: build2(sc)
         }
+        sv.isHidden = night == 6; photo.isHidden = night != 6; photo.layer.removeAllAnimations()
+        if night == 6 { startWalkPhoto() }
         applyFx()
         bgm?.stop(); bgm = Snd.play(night == 2 || night == 6 ? "tunnel" : "amb", night == 2 ? 0.9 : (night == 6 ? 0.6 : 0.45), loop: true)
         if night == 1 {
@@ -252,6 +271,7 @@ final class GameView: UIView {
         } else {
             state = 3
             if night == 0 { after(0.8) { _ = Snd.play("creak", 0.8) } }
+            if night == 5 { after(9.2) { self.legsDz = -0.15; self.legsFollow = true } }
             UIView.animate(withDuration: 1) { self.cover.alpha = 0 }
             var lines: [(Double, String)] = []
             switch night {
@@ -297,7 +317,7 @@ final class GameView: UIView {
         if wake {
             rig.position = SCNVector3(-2.2, 0.85, -2.45)
             kf = [[0, -2.2, 0.85, -2.45, 3.14, 1.3], [2.4, -2.2, 0.85, -2.45, 3.14, 1.3], [4, -2.2, 1.1, -2.3, 3.14, -0.75], [9, -2.2, 1.1, -2.3, 3.14, -0.75],
-                  [10.4, -1.1, 1.6, -1.1, 1.3, -0.1], [12.6, 1.2, 1.6, 2.0, 0, 0], [14.4, 1.2, 1.6, 4.4, 0, 0]]
+                  [10.4, -1.1, 1.6, -1.1, 3.6, -0.1], [12.6, 1.2, 1.6, 2.0, 3.14, 0], [14.4, 1.2, 1.6, 4.4, 3.14, 0]]
             endT = 15
         } else if again {
             rig.position = SCNVector3(2.2, 1.1, 0.3)
@@ -318,7 +338,7 @@ final class GameView: UIView {
         m.diffuse.magnificationFilter = .linear; m.diffuse.minificationFilter = .linear
         p.geometry?.firstMaterial = m; p.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0); p.position = SCNVector3(0, 0, dz)
         let b = SCNNode(); b.position = pos; b.eulerAngles = SCNVector3(0, flip ? Float.pi : 0, 0); b.addChildNode(p)
-        R.addChildNode(b); legsBody = b; legsMat = m; legsFollow = follow
+        R.addChildNode(b); legsBody = b; legsMat = m; legsFollow = follow; legsP = p; legsDz = dz
     }
 
     // the first dream: a bright, very strange field (not his room)
@@ -365,22 +385,9 @@ final class GameView: UIView {
         _ = hud("hand", 0.32, 0.32, -0.3, 0, 101)
     }
 
-    // outside at night: the road to the hospital
+    // outside at night: only the hospital photo is shown (see startWalkPhoto)
     func buildRoad(_ sc: SCNScene) {
-        let R = sc.rootNode
-        sc.background.contents = UIColor.black; sc.fogColor = UIColor.black; sc.fogStartDistance = 12; sc.fogEndDistance = 55; bx = 3; bz = 3
-        let g = SCNNode(geometry: SCNPlane(width: 60, height: 120)); g.geometry?.firstMaterial = col(0.12, 0.12, 0.14)
-        g.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0); g.position = SCNVector3(0, 0, -40); R.addChildNode(g)
-        let hp = SCNNode(geometry: SCNPlane(width: 16, height: 16 * 321 / 480)); hp.geometry?.firstMaterial = mat(.white, lit: false)
-        if let im = img("hospital", "jpg") { hp.geometry?.firstMaterial?.diffuse.contents = im }
-        hp.position = SCNVector3(0, 5.4, -32); R.addChildNode(hp)
-        for i in 0..<5 {
-            let z = -Float(i) * 7 - 3
-            blk(R, 0.15, 4, 0.15, 3.2, 2, z, col(0.2, 0.2, 0.22))
-            blk(R, 0.5, 0.3, 0.5, 3.2, 4.1, z, mat(UIColor(red: 1, green: 0.85, blue: 0.5, alpha: 1), lit: false))
-            addLight(.omni, 500, UIColor(red: 1, green: 0.85, blue: 0.55, alpha: 1), to: R, at: SCNVector3(3.2, 4, z), 9)
-        }
-        addLight(.ambient, 120, UIColor(red: 0.5, green: 0.55, blue: 0.9, alpha: 1), to: R, at: SCNVector3Zero)
+        sc.background.contents = UIColor.black
         rig.position = SCNVector3(0, 1.6, 0)
         kf = [[0, 0, 1.6, 0, 0, 0], [14, 0, 1.6, -26, 0, 0]]; endT = 13.8
     }
@@ -423,7 +430,7 @@ final class GameView: UIView {
         m.position = SCNVector3(p.x * 0.5, 0.9 + abs(sin(ft * 12)) * 0.1, z)
         let gap = (p.z - z) * mdir
         near = max(0, min(1, 1 - gap / 14))
-        chase?.volume = vol * cf * (0.25 + 0.75 * near)
+        chase?.volume = vol * cf * near
         if gap < 1.2 { caught() }
     }
     // caught: glitch, glitched death picture, calm picture with a sad tense tune, glitch, then straight back to the start
@@ -477,6 +484,7 @@ final class GameView: UIView {
         let mv = hypot(np.x - rig.position.x, np.z - rig.position.z) / max(dt, 0.001)
         stepT -= dt
         if mv > 0.8 && stepT <= 0 && introT > 1 { stepT = 0.5; _ = Snd.play("step", 0.5) }
+        spd = mv; bob += mv * dt * 7
         rig.position = np; yaw = L(4); pitch = L(5)
         if introT > endT && !introDone {
             introDone = true
@@ -489,10 +497,16 @@ final class GameView: UIView {
     @objc func tick(_ l: CADisplayLink) {
         guard alive else { return }
         let dt = Float(min(l.targetTimestamp - l.timestamp, 0.1))
-        tt += dt
+        tt += dt; spd = 0
         if state == 3 { intro(dt) }
         if state == 4 { pitch += (-1.1 - pitch) * min(1, dt * 6) }
-        if legsFollow, let b = legsBody { b.position = SCNVector3(rig.position.x, 0.03, rig.position.z); b.eulerAngles = SCNVector3(0, yaw, 0) }
+        walkAmt += ((spd > 0.6 ? 1 : 0) - walkAmt) * min(1, dt * 6)
+        let vy = (rig.position.y - lastY) / max(dt, 0.001); lastY = rig.position.y
+        headDip += (max(-1.5, min(1.5, vy)) * 0.14 - headDip) * min(1, dt * 8)
+        if legsFollow, let b = legsBody {
+            b.position = SCNVector3(rig.position.x, 0.03, rig.position.z); b.eulerAngles = SCNVector3(0, yaw + sin(bob * 0.5) * 0.07 * walkAmt, 0)
+            legsP?.position = SCNVector3(0, 0, legsDz + sin(bob) * 0.1 * walkAmt)
+        }
         if state == 1 {
             let f = Float(-jv.y), s = Float(jv.x), sp: Float = 3
             let dx = (-sin(yaw) * f + cos(yaw) * s) * sp * dt
@@ -501,7 +515,7 @@ final class GameView: UIView {
             let nx = max(-bx, min(bx, o.x + dx)), nz = max(-bz, min(bz, o.z + dz))
             rig.position = SCNVector3(nx, o.y, nz)
             let st = hypot(nx - o.x, nz - o.z)
-            dist += st; bob += st * 7; stepT -= dt
+            dist += st; bob += st * 7; stepT -= dt; spd = st / max(dt, 0.001)
             if st > 0.005 && stepT <= 0 { stepT = 0.5; _ = Snd.play("step", 0.6) }
             if night == 1 && dist > 6 { drop() }
             if night == 2 {
@@ -514,8 +528,8 @@ final class GameView: UIView {
         let amp: Float = fxOn ? 0.006 + shake + near * 0.02 : 0
         func r() -> Float { Float.random(in: -1...1) }
         rig.eulerAngles = SCNVector3(0, yaw, 0)
-        cam.eulerAngles = SCNVector3(pitch + r() * amp, r() * amp * 0.5, r() * amp)
-        cam.position = SCNVector3(r() * amp * 0.3, sin(bob) * 0.03, 0)
+        cam.eulerAngles = SCNVector3(pitch + headDip + r() * amp, r() * amp * 0.5, r() * amp + sin(bob * 0.5) * 0.012 * walkAmt)
+        cam.position = SCNVector3(r() * amp * 0.3 + sin(bob * 0.5) * 0.03 * walkAmt, sin(bob) * 0.05 * walkAmt, 0)
         shake = max(0, shake - dt * 0.06)
         if fxOn && Int(tt * 30) % 2 == 0 { grain.frame.origin = CGPoint(x: -CGFloat.random(in: 0...20), y: -CGFloat.random(in: 0...20)) }
     }
